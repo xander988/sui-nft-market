@@ -1,3 +1,5 @@
+// Copyright 2019-2022 SwiftNFT Systems
+// SPDX-License-Identifier: Apache-2.0
 module swift_nft::fragment {
     use sui::object::{UID, ID};
     use std::option;

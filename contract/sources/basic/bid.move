@@ -1,18 +1,13 @@
+// Copyright 2019-2022 SwiftNFT Systems
+// SPDX-License-Identifier: Apache-2.0
 module swift_nft::bid {
     use sui::object::{Self, UID, ID};
     use sui::coin::{Self, Coin};
     use sui::tx_context::{Self, TxContext};
-
-    use sui::event;
     use sui::transfer;
     use sui::dynamic_object_field as ofield;
     use swift_nft::market::{Self, Collection};
-
-    struct BidEvent has copy, drop {
-        item_id: ID,
-        bider: address,
-        amount: u64,
-    }
+    use swift_nft::bid_event;
 
     struct BidKey has key, store {
         id: UID,
@@ -20,30 +15,10 @@ module swift_nft::bid {
         bider: address,
     }
 
-    struct BidAmount<phantom T> has key, store {
+    struct ItemBidInfo<phantom CoinType> has key, store {
         id: UID,
-        money: Coin<T>,
+        funds: Coin<CoinType>,
         deadline: u64,
-    }
-
-    struct DealEvent has copy, drop {
-        item_id: ID,
-        bid_id: ID,
-        amount: u64,
-        success: bool,
-        operator: address
-    }
-
-    struct CancelEvent has copy, drop {
-        item_id: ID,
-        bid_id: ID,
-        operator: address,
-    }
-
-    struct UnlockBidEvent has copy, drop {
-        bid_id: ID,
-        success: bool,
-        operator: address,
     }
 
 
@@ -55,83 +30,67 @@ module swift_nft::bid {
     const EObjectNoExist: u64 = 5;
 
 
-    public entry fun Bid<T>(item_id: ID, money: Coin<T>, deadline: u64, ctx: &mut TxContext) {
-        event::emit(BidEvent {
-            item_id,
-            bider: tx_context::sender(ctx),
-            amount: coin::value(&money),
-        });
+    public entry fun bid<CoinType>(item_id: ID, funds: Coin<CoinType>, deadline: u64, ctx: &mut TxContext) {
+        bid_event::item_bid_event(item_id, tx_context::sender(ctx), coin::value(&funds));
         let bidkey = BidKey {
             id: object::new(ctx),
             item_id,
             bider: tx_context::sender(ctx),
         };
-        let bidamount = BidAmount<T> {
+        let item_info = ItemBidInfo<CoinType> {
             id: object::new(ctx),
-            money,
+            funds,
             deadline,
         };
-        ofield::add(&mut bidkey.id, item_id, bidamount);
+        ofield::add(&mut bidkey.id, item_id, item_info);
         transfer::share_object(bidkey);
     }
 
-    public entry fun deal_list<T1: key+store, T2>(
-        collection: &mut Collection<T1>,
+    public entry fun deal_list<Item: key+store, CoinType>(
+        collection: &mut Collection<Item>,
         items: ID,
         bid_key: &mut BidKey,
         ctx: &mut  TxContext
     ) {
         let items = market::delist(collection, items, ctx);
-        deal_unlist<T1, T2>(items, bid_key, ctx)
+        deal_unlist<Item, CoinType>(items, bid_key, ctx)
     }
 
-    public entry fun deal_unlist<T1: key+store, T2>(items: T1, bid_key: &mut BidKey, ctx: &mut  TxContext) {
+    public entry fun deal_unlist<Item: key+store, CoinType>(items: Item, bid_key: &mut BidKey, ctx: &mut  TxContext) {
         let items_id = object::id(&items);
         assert!(items_id == bid_key.item_id, EBidObjectMismatch);
         let bid_id = object::id(bid_key);
         assert!(ofield::exists_(&mut bid_key.id, items_id), EObjectNoExist);
-        let bidAmount = ofield::remove<ID, BidAmount<T2>>(&mut bid_key.id, items_id);
-        let BidAmount<T2> {
+        let item_info = ofield::remove<ID, ItemBidInfo<CoinType>>(&mut bid_key.id, items_id);
+        let ItemBidInfo<CoinType> {
             id,
-            money,
+            funds,
             deadline: _,
-        } = bidAmount;
+        } = item_info;
 
-        let amount_num = coin::value(&money);
+        let amount_num = coin::value(&funds);
 
-        event::emit(
-            DealEvent {
-                item_id: object::id(&items),
-                bid_id,
-                amount: amount_num,
-                success: true,
-                operator: tx_context::sender(ctx)
-            }
-        );
+        bid_event::bid_complete_event(object::id(&items), bid_id, true, tx_context::sender(ctx), amount_num);
+
         transfer::transfer(items, bid_key.bider);
-        transfer::transfer(money, tx_context::sender(ctx));
+        transfer::transfer(funds, tx_context::sender(ctx));
         object::delete(id)
     }
 
-    public entry fun cancel<T>(bid: &mut BidKey, item_id: ID, ctx: &mut TxContext) {
+    public entry fun bid_cancel<CoinType>(bid: &mut BidKey, item_id: ID, ctx: &mut TxContext) {
         assert!(bid.bider == tx_context::sender(ctx), ENoAuth);
         assert!(ofield::exists_(&mut bid.id, item_id), EObjectNoExist);
-        let bidAmount = ofield::remove<ID, BidAmount<T>>(&mut bid.id, item_id);
+        let item_info = ofield::remove<ID, ItemBidInfo<CoinType>>(&mut bid.id, item_id);
         let bid_id = object::id(bid);
-        let BidAmount<T> {
+        let ItemBidInfo<CoinType> {
             id,
-            money,
+            funds,
             deadline: _,
-        } = bidAmount;
+        } = item_info;
 
-        event::emit(
-            CancelEvent {
-                item_id,
-                bid_id,
-                operator: tx_context::sender(ctx)
-            }
-        );
-        transfer::transfer(money, bid.bider);
+        bid_event::bid_cancel_event(item_id, bid_id, tx_context::sender(ctx));
+
+        transfer::transfer(funds, bid.bider);
 
         object::delete(id)
     }

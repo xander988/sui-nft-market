@@ -1,3 +1,5 @@
+// Copyright 2019-2022 SwiftNFT Systems
+// SPDX-License-Identifier: Apache-2.0
 module swift_nft::tags {
     // TODO: Consider using `VecSet` instead of `VecMap` since
     // keys are simply indices

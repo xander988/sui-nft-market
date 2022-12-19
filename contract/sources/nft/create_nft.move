@@ -1,3 +1,5 @@
+// Copyright 2019-2022 SwiftNFT Systems
+// SPDX-License-Identifier: Apache-2.0
 module swift_nft::create_nft {
     use sui::url::{Self, Url};
     use std::string;
@@ -32,7 +34,6 @@ module swift_nft::create_nft {
         /// Array of values of attributes defining the characteristics of the asset.
         attribute_values: vector<string::String>,
     }
-
 
 
     // ===== Events =====
@@ -77,28 +78,28 @@ module swift_nft::create_nft {
         attribute_values: vector<vector<u8>>,
         ctx: &mut TxContext
     ) {
-        let collection_id=if (vector::length(&collection_id)>0){
+        let collection_id = if (vector::length(&collection_id) > 0) {
             option::some(object::id_from_bytes(collection_id))
-        }else{
+        }else {
             option::none<ID>()
         };
 
-        let symbol=if (vector::length(&symbol)>0){
+        let symbol = if (vector::length(&symbol) > 0) {
             option::some(string::utf8(symbol))
-        }else{
+        }else {
             option::none<string::String>()
         };
 
 
-        let animation_url=if (vector::length(&animation_url)>0){
+        let animation_url = if (vector::length(&animation_url) > 0) {
             option::some(string::utf8(animation_url))
-        }else{
+        }else {
             option::none<string::String>()
         };
 
-        let external_url=if (vector::length(&external_url)>0){
+        let external_url = if (vector::length(&external_url) > 0) {
             option::some(string::utf8(external_url))
-        }else{
+        }else {
             option::none<string::String>()
         };
 
@@ -143,16 +144,17 @@ module swift_nft::create_nft {
 
     /// Permanently delete `nft`
     public entry fun burn(nft: SWIFTNFT, _: &mut TxContext) {
-        let SWIFTNFT { id,
+        let SWIFTNFT {
+            id,
             name: _,
             description: _,
             url: _,
-            collection_id:_,
-            symbol:_,
+            collection_id: _,
+            symbol: _,
             animation_url: _,
-            external_url:_,
+            external_url: _,
             attribute_keys: _,
-            attribute_values: _,} = nft;
+            attribute_values: _, } = nft;
         object::delete(id)
     }
 }
