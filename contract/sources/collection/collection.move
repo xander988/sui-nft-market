@@ -1,8 +1,8 @@
 // Copyright 2019-2022 SwiftNFT Systems
 // SPDX-License-Identifier: Apache-2.0
 module swift_nft::collection {
-    use sui::object::{Self, UID, ID};
-    use std::string::{Self, String};
+    use sui::object::{ UID, ID};
+    use std::string::{ String};
 
     struct Collection<phantom T, M: store,Royalty> has key, store {
         id: UID,

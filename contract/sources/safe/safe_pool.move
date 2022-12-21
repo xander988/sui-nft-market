@@ -7,7 +7,6 @@ module swift_nft::safe_pool {
     use sui::vec_set::{Self,VecSet};
     use std::string::String;
     use sui::tx_context::TxContext;
-    use sui::transfer;
 
     ///long-term lease  mutable(exclusive item)   high fee(is setting by item's ownerself or system) unique
     ///long-term lease  immutable(multi use )     low fee(is setting by item's ownerself or system)  multiple
@@ -15,54 +14,24 @@ module swift_nft::safe_pool {
     ///the owner himself mutable/immutable reference in gaming(The Item is muti listed in marketplace)
     /// flashloan mutable   fee(is setting by item's ownerself or system)
     /// flashloan immutable fee(is setting by item's ownerself or system)
-
     ///item is listed in market cannot long-term lease
     struct SafePool<phantom Item:key+store> has key{
         id: UID,
-        /// NFT's in this safe, indexed by their ID's
-        /// All operations are performed here
+        ///
         nfts: ObjectTable<ID, Item>,
-        /// For easier naming/retrieval of NFT's. range is a subset of the domain of `nfts`
-        /// todo
         nicknames: Table<String, ID>,
-
-        ///storing ID ===>valid  version
-        /// item ID===>OwnerCap ID
         owner_cap: VecMap<ID,ID>,
-
-
-        /// Valid version for BorrowCap's
-        /// ItemID==>BorrowID
         borrow_cap:  VecMap<ID,ID>,
-
-
-        /// ID's of NFT's that are currently listed for sale. These can only be borrowed immutably
-        /// items are listing in the marketplace
-        /// listing item cannot
         listed: VecMap<ID,u64>,
-        /// ID's of NFT's that are currently borrowed immutable
-        /// be used for peer to peer or long-term lease
-        /// todo try to use VecMap in the future marked as immutable count
         immutable_borrowed: VecMap<ID,u64>,
-        ///ID's of NFT's that are currently borrowed
         mutable_borrowed: VecSet<ID>,
-
-       // flash_immutable_borrowed: VecMap<ID,u64>,
-        ///flash_borrowd: ID's of NFT's that are currently borrowed. These cannot be listed for sale while borrowing is active
         flash_loan: VecSet<ID>,
-
-        /// ItemID==> listed count
-        //transfer_cap:  VecMap<ID,u64>,
-        ///ItemID==>FlashloanCap
-        //flash_loan_cap: VecMap<ID,ID>
     }
 
 
     struct OwnerCap<phantom  Item> has key {
         id: UID,
-        /// The ID of the safe that this capability grants permissions to
         safe_id: ID,
-        ///
         item_id: ID,
     }
 
@@ -104,7 +73,6 @@ module swift_nft::safe_pool {
 
         borrow_cap_id: ID,
 
-        /// The safe that this NFT came from
         safe_id: ID,
         item_id: ID,
         active: bool
@@ -117,25 +85,18 @@ module swift_nft::safe_pool {
         let self=SafePool<Item>{
 
             id: object::new(ctx),
-            /// NFT's in this safe, indexed by their ID's
             nfts: object_table::new<ID,Item>(ctx),
-            /// For easier naming/retrieval of NFT's. range is a subset of the domain of `nfts`
             nicknames: table::new<String,ID>(ctx),
-            /// ID's of NFT's that are currently listed for sale. These can only be borrowed immutably
             owner_cap: vec_map::empty<ID,ID>(),
 
             borrow_cap: vec_map::empty<ID,ID>(),
 
             listed: vec_map::empty<ID,u64>(),
-            /// ID's of NFT's that are currently borrowedimmutable
-            /// be used for peer to peer or long-term lease
-            /// todo try to use VecMap in the future marked as immutable count
+
             immutable_borrowed: vec_map::empty<ID,u64>(),
-            ///ID's of NFT's that are currently borrowedmutable
             mutable_borrowed: vec_set::empty<ID>(),
 
             // flash_immutable_borrowed: VecMap<ID,u64>,
-            ///flash_borrowd: ID's of NFT's that are currently borrowed. These cannot be listed for sale while borrowing is active
             flash_loan: vec_set::empty<ID>(),
 
         };
@@ -156,7 +117,6 @@ module swift_nft::safe_pool {
 
 
     public fun add_item<Item: key+store>(self: &mut SafePool<Item>,item: Item,ctx: &mut TxContext): (OwnerCap<Item>,BorrowCap<Item>){
-        ///add item to object_tables
         let nfts=&mut self.nfts;
         let item_id=object::id(&item);
         object_table::add(nfts,item_id,item);
@@ -168,9 +128,7 @@ module swift_nft::safe_pool {
         };
         let borrow_cap=BorrowCap<Item>{
             id: object::new(ctx),
-            /// The ID of the safe that this capability grants permissions to
             safe_id: object::id(self),
-            /// The ID of the NFT that this capability can transfer
             item_id,
         };
         (owner_cap,borrow_cap)
@@ -207,7 +165,6 @@ module swift_nft::safe_pool {
     /// This `TransferCap` can be (e.g.) used to list the NFT on a marketplace.
     ///
     public fun sell_nft<Item:  key+store>(self: &mut SafePool<Item>,owner_cap: &OwnerCap<Item>,  item_id: ID,ctx: &mut TxContext): TransferCap<Item> {
-        ///first check
         let safe_id=object::id(self);
         let owner_id=object::id(owner_cap);
         assert!(safe_id==owner_cap.safe_id,4);
@@ -217,12 +174,9 @@ module swift_nft::safe_pool {
         let transferCap=TransferCap<Item>{
             id: object::new(ctx),
             owner_id,
-            /// The ID of the safe that this capability grants permissions to
             safe_id,
-            /// The ID of the NFT that this capability can transfer
             item_id,
         };
-        ///NFT is marked as listing
         if (!vec_map::contains(&mut self.listed,&item_id)){
             vec_map::insert(&mut self.listed, item_id,1)
         }else{
@@ -262,9 +216,8 @@ module swift_nft::safe_pool {
         let TransferCap<Item>{
             id,
             owner_id:_,
-            /// The ID of the safe that this capability grants permissions to
             safe_id: _,
-            /// The ID of the NFT that this capability can transfer
+
             item_id: _,
         }=transfer_cap;
 
@@ -278,11 +231,9 @@ module swift_nft::safe_pool {
         let Borrowed<T>{
             id,
             borrow_cap_id:_,
-            /// The safe that this NFT came from
             safe_id: _,
             item_id,
-            /// If true, only an immutable reference to `nft` can be granted
-            /// Always false if the NFT is currently listed
+
             active,
         }=borrow_cap;
         if (active){
@@ -300,11 +251,7 @@ module swift_nft::safe_pool {
 
         object::delete(id)
     }
-    ///long-term lease
-    ///mutable/immutable lease
-    ///gaming lease
-    /// status is marked as long-term lease
-    ///
+
     public fun borrow_nft<Item :key+store>(self: &mut SafePool<Item>,borrow_cap: &BorrowCap<Item>,item_id: ID,active: bool,ctx: &mut TxContext): Borrowed<Item> {
         //let(immutable_num,mutable_num)=(0,0);
         let safe_id=object::id(self);
@@ -329,14 +276,12 @@ module swift_nft::safe_pool {
         if (immutable_num>0){
             let immutable_num1=vec_map::get_mut(&mut self.immutable_borrowed,&item_id);
             *immutable_num1=*immutable_num1+1
-            //vec_map::insert(&mut self.immutable_borrowed,item_id,immutable_num+1)
         };
 
         let borrowed=Borrowed<Item>{
             id: object::new(ctx),
             borrow_cap_id,
 
-            /// The safe that this NFT came from
             safe_id,
 
             item_id,
@@ -350,7 +295,7 @@ module swift_nft::safe_pool {
 
 
 
-    /// Get access
+
     public fun get_nft_mut<T: key+store>(safe: &mut SafePool<T>,borrowed: &mut Borrowed<T>): &mut T {
         assert!(borrowed.active==true,3);
         return object_table::borrow_mut(&mut safe.nfts,borrowed.item_id)
@@ -364,7 +309,7 @@ module swift_nft::safe_pool {
 
 
     public fun flash_loan_item<Item: key+store>(
-        self: &mut SafePool<Item>,  item_id: ID, ctx: &mut TxContext
+        self: &mut SafePool<Item>,  item_id: ID,
     ): (Item, FlashLoanReceipt<Item>) {
 
         assert!(!vec_set::contains(&self.flash_loan,&item_id),1);
@@ -375,7 +320,7 @@ module swift_nft::safe_pool {
 
         assert!(object_table::contains(items,item_id),3);
 
-        ///withdraw nft from object_table
+
         vec_set::insert(&mut self.flash_loan,item_id);
         let item=object_table::remove(items,item_id);
 
@@ -391,7 +336,7 @@ module swift_nft::safe_pool {
         self: &mut SafePool<Item>,
         receipt: FlashLoanReceipt<Item>,
         item: Item,
-        ctx: &mut TxContext){
+       ){
         let FlashLoanReceipt<Item>{
             safe_id,
             item_id,

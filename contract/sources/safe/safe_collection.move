@@ -6,7 +6,7 @@ module swift_nft::safe_collection {
 
 
     ///flashloan
-    struct Collection<phantom T,M: store,Royalty: store> has key, store {
+    struct Collection<phantom T,M: store,Royalty: store,BorrowRate:store,FlashloanRate: store> has key, store {
         id: UID,
         /// Address that created this collection
         creator: address,
@@ -20,6 +20,9 @@ module swift_nft::safe_collection {
         custom_metadata: M,
 
         royalty: Royalty,
+        borrow_fee: BorrowRate,
+
+        flash_loan_fee:FlashloanRate,
     }
 
 
