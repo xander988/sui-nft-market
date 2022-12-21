@@ -1,4 +1,4 @@
-module swift_nft::safe_test1 {
+module swift_nft::safe_pool {
 
     use sui::object::{Self,UID,ID};
     use sui::object_table::{Self,ObjectTable};
