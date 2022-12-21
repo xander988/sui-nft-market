@@ -4,12 +4,8 @@ module swift_nft::collection {
     use sui::object::{Self, UID, ID};
     use std::string::{Self, String};
 
-    struct Collection<phantom T, M: store,Royalty, Loan> has key, store {
+    struct Collection<phantom T, M: store,Royalty> has key, store {
         id: UID,
-        // Standard fields that every collection needs go here.
-        // Pulling a few obvious ones from https://github.com/Origin-Byte/nft-protocol/blob/main/sources/collection/collection.move and
-        // https://github.com/suiet/standard/blob/main/docs/nft/collections.md
-        // but more will be needed
         /// Address that created this collection
         creator: address,
         /// Name of the collection. TODO: should this just be T.name?
@@ -24,7 +20,6 @@ module swift_nft::collection {
 
         royalty: Royalty,
 
-        lending: Loan
     }
 
     /// Proof that the given NFT is one of the limited `total_supply` NFT's in `Collection`

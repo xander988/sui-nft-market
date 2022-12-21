@@ -10,9 +10,13 @@ module swift_nft::safe {
     use sui::tx_context::TxContext;
     use sui::transfer;
 
+    ///long-term lease  mutable(exclusive item)   high fee(is setting by item's ownerself or system)
+    ///long-term lease  immutable(multi use )     low fee(is setting by item's ownerself or system)
+    ///the owner himself mutable/immutable reference in gaming(The Item is muti listed in marketplace)
+    /// flashloan mutable   fee(is setting by item's ownerself or system)
+    /// flashloan immutable fee(is setting by item's ownerself or system)
 
-
-    struct Safe<phantom Item> has key {
+    struct Safe<phantom Item:key+store> has key{
         id: UID,
         /// NFT's in this safe, indexed by their ID's
         nfts: ObjectTable<ID, Item>,
@@ -31,8 +35,10 @@ module swift_nft::safe {
         transfer_cap:  VecMap<ID,u64>,
         /// Valid version for BorrowCap's
         borrow_cap:  VecMap<ID,ID>,
-        ///
-        force_borrow: VecSet<ID>
+        ///long-term-lease
+        long_term_lease: VecSet<ID>,
+        ///mutable lease
+        mutable_lease: VecSet<ID>
     }
 
 
@@ -78,12 +84,10 @@ module swift_nft::safe {
     }
 
     struct FlashBorrowed<Item> {
-        nft: Item,
+        item: Item,
         /// The safe that this NFT came from
         safe_id: ID,
-        /// If true, only an immutable reference to `nft` can be granted
-        /// Always false if the NFT is currently listed
-        is_mutable: bool,
+
     }
 
     /// "Hot potato" wrapping the borrowed NFT. Must be returned to `safe_id`
@@ -107,7 +111,7 @@ module swift_nft::safe {
 
     /// Create and share a fresh Safe that can hold T's.
     /// Return an `OwnerCap` for the Safe
-    public fun create<Item: key+store>(ctx: &mut TxContext){
+    public fun create<Item: key+store>(ctx: &mut TxContext):(Safe<Item>,FlashBorrowCap<Item>){
         let safe=Safe<Item>{
             id: object::new(ctx),
             /// NFT's in this safe, indexed by their ID's
@@ -127,9 +131,19 @@ module swift_nft::safe {
 
             borrow_cap: vec_map::empty<ID,ID>(),
             //borrow_cap: vec_map::empty<ID,u64>(),
-            force_borrow: vec_set::empty<ID>()
+            long_term_lease: vec_set::empty<ID>(),
+
+            mutable_lease: vec_set::empty<ID>()
         };
-        transfer::share_object(safe)
+
+        let flash_borrow=FlashBorrowCap<Item>{
+            id: object::new(ctx),
+            safe_id: object::id(&safe),
+            version:0
+        };
+        (safe,flash_borrow)
+        // transfer::share_object(flash_borrow);
+        // transfer::share_object(safe)
     }
 
     const ENftIDMismatch: u64=1;
@@ -137,7 +151,10 @@ module swift_nft::safe {
     const EOwnerCapNotlegal: u64=3;
     const EItemIDBorrowCapAlreadyExist:u64=4;
     const ETwoOwnerIDMismatch: u64=5;
-   // const ETwoSafeMismatch: u64=0;
+    const EItemLongTermLease: u64=6;
+    const EItemNotListing: u64=7;
+    const EItemAlreadyLongTermOrMutableLease: u64=8;
+
 
 
     public fun add_item<Item: key+store>(safe: &mut Safe<Item>,item: Item,ctx: &mut TxContext): (OwnerCap<Item>,BorrowCap<Item>){
@@ -166,9 +183,8 @@ module swift_nft::safe {
 
     /// Produce a `TransferCap` for the NFT with `id` in `safe`.
     /// This `TransferCap` can be (e.g.) used to list the NFT on a marketplace.
-    public fun sell_nft<Item>(safe: &mut Safe<Item>,owner_cap: &mut OwnerCap<Item>,  item_id: ID,ctx: &mut TxContext): TransferCap<Item> {
-        //assert!(ve)
-        assert!(!vec_set::contains(&safe.force_borrow,&item_id),1);
+    public fun sell_nft<Item:  key+store>(safe: &mut Safe<Item>,owner_cap: &mut OwnerCap<Item>,  item_id: ID,ctx: &mut TxContext): TransferCap<Item> {
+        assert!(!vec_set::contains(&safe.long_term_lease,&item_id),EItemLongTermLease);
         let owner_nft_id=owner_cap.nft_id;
         let owner_safe_id=owner_cap.safe_id;
         let safe_id=object::id(safe);
@@ -187,10 +203,25 @@ module swift_nft::safe {
             nft_id: item_id,
             version: 0
         };
+        ///NFT is marked as listing
         if (!vec_set::contains(&mut safe.listed,&item_id)){
             vec_set::insert(&mut safe.listed, item_id)
         };
         return transferCap
+    }
+
+    public  fun destory_transferCap<Item: key+store>(transfer_cap: TransferCap<Item>){
+        let TransferCap<Item>{
+            id,
+            owner_id:_,
+            /// The ID of the safe that this capability grants permissions to
+            safe_id: _,
+            /// The ID of the NFT that this capability can transfer
+            nft_id: _,
+            version: _
+        }=transfer_cap;
+
+        object::delete(id)
     }
     //
     /// Consume `cap`, remove the NFT with `id` from `safe`, and return it to the caller.
@@ -198,15 +229,37 @@ module swift_nft::safe {
     /// before completing  the purchase.
     /// This invalidates all other `TransferCap`'s by increasing safe.transfer_cap_version
     ///todo params royalty: RoyaltyReceipt<Item>
+    ///
+    ///
     public fun buy_nft<Item: key+store,CoinType>(safe: &mut Safe<Item>,cap: TransferCap<Item>, item_id: ID): Item {
-        assert!(!vec_set::contains(&safe.force_borrow,&item_id),1);
 
         check_purcahse(safe,&cap,item_id);
+        destory_transferCap(cap);
+        extract_nft(safe,item_id)
+    }
 
+    fun extract_nft<Item: key+store>(safe: &mut Safe<Item>,item_id: ID): Item{
+        //remove owner_cap
+        vec_map::remove(&mut safe.owner_cap,&item_id);
+        //remove borrow_cap
+        vec_map::remove(&mut safe.borrow_cap,&item_id);
+        // if (vec_map::contains(&mut safe.borrow_cap,&item_id)){
+        //
+        // };
+        //remove borrowed list
+        if (vec_set::contains(&mut safe.borrowed,&item_id)){
+            vec_set::remove(&mut safe.borrowed,&item_id);
+        };
+
+        //remove transfer list
+
+        if (vec_set::contains(&mut safe.listed,&item_id)){
+            vec_set::remove(&mut safe.listed,&item_id);
+        };
         let item=object_table::remove<ID,Item>(&mut safe.nfts,item_id);
 
         ///marked all transferCap and OwnerCap is illegal(or destory)
-       item
+        item
     }
 
 
@@ -215,6 +268,8 @@ module swift_nft::safe {
     // }
 
     fun check_purcahse<Item: key+store>(safe: &mut Safe<Item>,cap: &TransferCap<Item>,item_id: ID){
+        ///check item_id in listing market
+        assert!(vec_set::contains(&safe.listed,&item_id),EItemNotListing);
         assert!(object::id(safe)==cap.safe_id,ESafeIDMismatch);
         assert!(item_id==cap.nft_id,ENftIDMismatch);
         let (_,remove_owner_cap_id)=vec_map::remove(&mut safe.owner_cap,&item_id);
@@ -222,12 +277,10 @@ module swift_nft::safe {
         if (vec_map::contains(&mut safe.borrow_cap,&item_id)){
             vec_map::remove(&mut safe.borrow_cap,&item_id);
         };
-        //remove borrow list
+        //remove borrowed list
         vec_set::remove(&mut safe.borrowed,&item_id);
-        assert!(vec_set::contains(&mut safe.borrowed,&item_id),3);
         //remove transfer list
         vec_set::remove(&mut safe.listed,&item_id);
-        assert!(vec_set::contains(&mut safe.listed,&item_id),3);
     }
 
     ///
@@ -256,7 +309,7 @@ module swift_nft::safe {
     //
     //     return borrowed
     // }
-    public fun unborrow_nft<T>(safe: &mut Safe<T>,borrow_cap: Borrowed<T>){
+    public fun unborrow_nft<T: key+store>(safe: &mut Safe<T>,borrow_cap: Borrowed<T>){
 
         let Borrowed<T>{
             id,
@@ -267,25 +320,37 @@ module swift_nft::safe {
             status,
             /// If true, only an immutable reference to `nft` can be granted
             /// Always false if the NFT is currently listed
-            is_mutable: _,
+            is_mutable,
         }=borrow_cap;
         if (status){
-            vec_set::remove(&mut safe.force_borrow,&nft_id)
-        }
-    }
+            vec_set::remove(&mut safe.long_term_lease,&nft_id)
+        };
+        if (is_mutable){
+            vec_set::remove(&mut safe.mutable_lease,&nft_id)
+        };
 
-    public fun borrow_nft<T>(safe: &mut Safe<T>,borrow_cap: &BorrowCap<T>,item_id: ID,status: bool,ctx: &mut TxContext): Borrowed<T> {
-        //check  BorrowCap ability legal
-        assert!(!vec_set::contains(&safe.force_borrow,&item_id),1);
+        object::delete(id)
+    }
+    ///long-term lease
+    ///mutable/immutable lease
+    ///gaming lease
+    /// status is marked as long-term lease
+    ///
+    public fun borrow_nft< T:key+store>(safe: &mut Safe<T>,borrow_cap: &BorrowCap<T>,item_id: ID,status: bool,is_mutable: bool,ctx: &mut TxContext): Borrowed<T> {
+
+        assert!(!vec_set::contains(&safe.long_term_lease,&item_id),EItemAlreadyLongTermOrMutableLease);
+        assert!(!vec_set::contains(&safe.mutable_lease,&item_id),EItemAlreadyLongTermOrMutableLease);
 
         let borrow_cap_id=object::id(borrow_cap);
 
-        let legal=vec_map::contains(&mut safe.borrow_cap,&borrow_cap_id);
-
-        assert!(legal,1);
+        assert!(vec_map::contains(&mut safe.borrow_cap,&borrow_cap_id),1);
 
         if (status){
-            vec_set::insert(&mut safe.force_borrow,item_id)
+            vec_set::insert(&mut safe.long_term_lease,item_id)
+        };
+
+        if (is_mutable){
+            vec_set::insert(&mut safe.mutable_lease,item_id)
         };
 
         let borrowed=Borrowed<T>{
@@ -295,18 +360,52 @@ module swift_nft::safe {
             /// The safe that this NFT came from
             safe_id: object::id(safe),
             status,
-            /// If true, only an immutable reference to `nft` can be granted
-            /// Always false if the NFT is currently listed
-            is_mutable: false,
+            is_mutable,
         };
         return borrowed
+    }
+
+
+    public(friend) fun  create_flashloan<Item: key+store>(safe: &mut Safe<Item>,flash_cap: &mut FlashBorrowCap<Item>,item_id: ID):FlashBorrowed<Item>{
+        let item=extract_nft(safe,item_id);
+        let flash_loan=FlashBorrowed<Item>{
+            item,
+            safe_id:object::id(safe),
+        };
+        vec_set::insert(&mut safe.flash_borrowed,item_id);
+        flash_loan
+    }
+
+    public fun  destory_flashloan<Item: key+store>(safe: &mut Safe<Item>,flash_loan: FlashBorrowed<Item>):Item{
+        let FlashBorrowed<Item>{
+            item,
+            safe_id:_,
+        }=flash_loan;
+        vec_set::remove(&mut safe.flash_borrowed,&object::id(&item));
+        item
+    }
+
+    public  fun get_flashloan_nft_mut<Item: key+store>(safe: &mut Safe<Item>,flashloan: &mut FlashBorrowed<Item>):&mut Item{
+        let item_id=object::id(&flashloan.item);
+        let safe_id=flashloan.safe_id;
+        assert!(safe_id==object::id(safe),ESafeIDMismatch);
+        assert!(vec_set::contains(&safe.flash_borrowed,&item_id),8);
+        return object_table::borrow_mut(&mut safe.nfts,item_id)
+    }
+
+    public  fun get_flashloan_nft<Item: key+store>(safe: &mut Safe<Item>,flashloan: &mut FlashBorrowed<Item>):& Item{
+        let item_id=object::id(&flashloan.item);
+        let safe_id=flashloan.safe_id;
+        assert!(safe_id==object::id(safe),ESafeIDMismatch);
+        assert!(vec_set::contains(&safe.flash_borrowed,&item_id),8);
+        return object_table::borrow(&mut safe.nfts,item_id)
+
     }
 
 
     /// Get access
     public fun get_nft_mut<T: key+store>(safe: &mut Safe<T>,borrowed: &mut Borrowed<T>): &mut T {
         assert!(borrowed.is_mutable==true,3);
-
         return object_table::borrow_mut(&mut safe.nfts,borrowed.nft_id)
     }
 
